@@ -27,5 +27,6 @@ export async function GET() {
     awayFormation: fdMatch?.awayTeam?.formation,
     awayLineupCount: awayLineup.length,
     awayLineupSample: awayLineup.slice(0, 3).map((p: any) => ({ name: p.name, pos: p.position, shirt: p.shirtNumber })),
+    rawSample: fdMatch?.homeTeam,
   });
 }
