@@ -1,7 +1,6 @@
 /**
  * GET /api/debug
  * Diagnostic endpoint — shows raw API-Football responses.
- * Remove this file after debugging.
  */
 
 import { NextResponse } from "next/server";
@@ -15,10 +14,10 @@ async function apiFetch(path: string) {
   try {
     const res = await fetch(url, {
       headers: { "x-apisports-key": key },
-      next: { revalidate: 0 },
+      cache: "no-store",
     });
     const json = await res.json();
-    return { url, status: res.status, results: json.results, errors: json.errors, sample: json.response?.slice(0, 2) };
+    return { url, status: res.status, results: json.results, errors: json.errors, response: json.response?.slice(0, 3) };
   } catch (e: any) {
     return { url, error: e.message };
   }
@@ -26,21 +25,34 @@ async function apiFetch(path: string) {
 
 export async function GET() {
   const key = process.env.FOOTBALL_API_KEY;
+  const today = new Date().toISOString().slice(0, 10);
 
-  const [next10, today, live, status] = await Promise.all([
-    apiFetch("/fixtures?league=1&season=2026&next=10"),
-    apiFetch(`/fixtures?league=1&season=2026&date=${new Date().toISOString().slice(0, 10)}`),
-    apiFetch("/fixtures?league=1&season=2026&live=all"),
+  const [
+    apiStatus,
+    worldCupLeague,
+    next10,
+    todayFixtures,
+    liveFixtures,
+    searchWorldCup,
+  ] = await Promise.all([
     apiFetch("/status"),
+    apiFetch("/leagues?id=1&season=2026"),
+    apiFetch("/fixtures?league=1&season=2026&next=10"),
+    apiFetch(`/fixtures?league=1&season=2026&date=${today}`),
+    apiFetch("/fixtures?league=1&season=2026&live=all"),
+    apiFetch("/leagues?name=FIFA World Cup&season=2026"),
   ]);
 
   return NextResponse.json({
     keyPresent: !!key,
     keyPrefix: key ? key.slice(0, 6) + "..." : null,
     serverTime: new Date().toISOString(),
+    serverDate: today,
+    apiStatus,
+    worldCupLeague,
     next10,
-    today,
-    live,
-    apiStatus: status,
-  });
+    todayFixtures,
+    liveFixtures,
+    searchWorldCup,
+  }, { status: 200 });
 }
