@@ -117,88 +117,62 @@ export async function getFixtureById(id: number): Promise<Fixture | null> {
 }
 
 export async function getLineups(fixtureId: number): Promise<{ home: TeamSheet; away: TeamSheet } | null> {
+  // Try football-data.org first (only works during match when lineup is confirmed)
   try {
     const data = await apiFetch<any>(`/matches/${fixtureId}`);
     const homeLineup: any[] = data.homeTeam?.lineup ?? [];
     const awayLineup: any[] = data.awayTeam?.lineup ?? [];
-    if (homeLineup.length === 0 && awayLineup.length === 0) return null;
-    return {
-      home: buildTeamSheet(data.homeTeam),
-      away: buildTeamSheet(data.awayTeam),
-    };
-  } catch { return null; }
+    if (homeLineup.length > 0 || awayLineup.length > 0) {
+      return {
+        home: buildTeamSheet(data.homeTeam),
+        away: buildTeamSheet(data.awayTeam),
+      };
+    }
+  } catch { /* fall through */ }
+
+  // Fallback: TheSportsDB free API (no key needed, has pre-match lineups)
+  return getLineupsFromSportsDB(fixtureId);
 }
 
-function buildTeamSheet(team: any): TeamSheet {
-  const lineup: any[] = team?.lineup ?? [];
-  const bench: any[] = team?.bench ?? [];
-  const formationStr: string = team?.formation ?? "";
-  const lines = formationStr.split("-").map(Number).filter((n) => !isNaN(n) && n > 0);
-  return {
-    teamId: team?.id ?? 0,
-    teamName: team?.name ?? "Unknown",
-    teamCountry: team?.name ?? "Unknown",
-    coach: team?.coach?.name ?? "Unknown",
-    formation: { raw: formationStr, lines },
-    starters: lineup.map((p: any) => normalizePlayer(p, team?.name ?? "")),
-    subs: bench.map((p: any) => normalizePlayer(p, team?.name ?? "")),
-    confirmed: lineup.length >= 11,
-  };
-}
-
-function mapPosition(pos: string): string {
-  const p = (pos ?? "").toUpperCase();
-  if (p.includes("GOALKEEPER") || p === "G") return "G";
-  if (p.includes("DEFENDER") || p === "D") return "D";
-  if (p.includes("MIDFIELDER") || p === "M") return "M";
-  if (p.includes("FORWARD") || p.includes("ATTACKER") || p === "F") return "F";
-  return pos.charAt(0) || "?";
-}
-
-function normalizePlayer(p: any, teamName: string): Player {
-  const clubLeagueCountry = p.currentTeam?.area?.name ?? "";
-  return {
-    id: p.id ?? 0,
-    name: p.name ?? "Unknown",
-    number: p.shirtNumber ?? 0,
-    pos: mapPosition(p.position ?? ""),
-    club: p.currentTeam?.name ?? "Unknown Club",
-    clubLeague: p.currentTeam?.runningCompetition?.name ?? "",
-    clubLeagueCountry,
-    leagueTier: classifyLeagueTier(p.currentTeam?.runningCompetition?.name ?? "", clubLeagueCountry, teamName),
-    bornAbroad: false,
-    scoutNote: undefined,
-  };
-}
-
-const TOP5_EU = ["Premier League", "La Liga", "Bundesliga", "Serie A", "Ligue 1"];
-const OTHER_EU_COUNTRIES = ["Netherlands","Portugal","Belgium","Turkey","Scotland","Austria","Switzerland","Greece","Ukraine","Denmark","Sweden","Norway","Czech Republic","Croatia","Serbia","Poland","Romania","Hungary"];
-
-export function classifyLeagueTier(leagueName: string, leagueCountry: string, teamCountry: string): import("@/types").LeagueTier {
-  if (TOP5_EU.includes(leagueName)) return "top5eu";
-  if (OTHER_EU_COUNTRIES.includes(leagueCountry)) return "otherEu";
-  if (leagueCountry && teamCountry && leagueCountry.toLowerCase() === teamCountry.toLowerCase()) return "homeleague";
-  return "minor";
-}
-
-export async function getMatchEvents(fixtureId: number): Promise<MatchEvent[]> {
+/**
+ * TheSportsDB (free, no key) lineup fetcher.
+ * Strategy: fetch today's WC events from TheSportsDB, match by kickoff time
+ * to our fixture, then call lookuplineup with the TheSportsDB event ID.
+ */
+async function getLineupsFromSportsDB(fixtureId: number): Promise<{ home: TeamSheet; away: TeamSheet } | null> {
   try {
-    const data = await apiFetch<any>(`/matches/${fixtureId}`);
-    const goals: MatchEvent[] = (data.goals ?? []).map((g: any) => ({
-      minute: g.minute ?? 0, type: "Goal",
-      playerOut: g.scorer?.name ?? "Unknown",
-      detail: g.method ?? undefined,
-    }));
-    const subs: MatchEvent[] = (data.substitutions ?? []).map((s: any) => ({
-      minute: s.minute ?? 0, type: "subst",
-      playerIn: s.replacedBy?.name ?? "Unknown",
-      playerOut: s.player?.name ?? "Unknown",
-    }));
-    const bookings: MatchEvent[] = (data.bookings ?? []).map((b: any) => ({
-      minute: b.minute ?? 0, type: "Card",
-      playerOut: b.player?.name ?? "Unknown",
-      detail: b.card ?? undefined,
-    }));
-    return [...goals, ...subs, ...bookings].sort((a, b) => a.minute - b.minute);
-  } catch { return []; }
-}
+    // 1. Get our fixture's kickoff time from football-data.org
+    const fdMatch = await apiFetch<any>(`/matches/${fixtureId}`);
+    if (!fdMatch?.utcDate) return null;
+    const kickoffDate = fdMatch.utcDate.slice(0, 10); // "2026-06-12"
+    const kickoffTs = new Date(fdMatch.utcDate).getTime();
+    const homeTeamName: string = fdMatch.homeTeam?.name ?? "";
+    const awayTeamName: string = fdMatch.awayTeam?.name ?? "";
+
+    // 2. Get TheSportsDB events for that date, WC league (4429)
+    const tsdbUrl = `https://www.thesportsdb.com/api/v1/json/123/eventsday.php?d=${kickoffDate}&l=4429`;
+    const tsdbRes = await fetch(tsdbUrl, { cache: "no-store" });
+    const tsdbData = await tsdbRes.json();
+    const events: any[] = tsdbData.events ?? [];
+
+    // 3. Match event by kickoff timestamp (within 5 min) or team name
+    let tsdbEvent = events.find((e: any) => {
+      if (!e.strTimestamp) return false;
+      const diff = Math.abs(new Date(e.strTimestamp).getTime() - kickoffTs);
+      return diff < 5 * 60 * 1000; // within 5 minutes
+    });
+    // fallback: match by home team name substring
+    if (!tsdbEvent && homeTeamName) {
+      tsdbEvent = events.find((e: any) =>
+        e.strHomeTeam?.toLowerCase().includes(homeTeamName.toLowerCase().split(" ")[0]) ||
+        homeTeamName.toLowerCase().includes((e.strHomeTeam ?? "").toLowerCase().split(" ")[0])
+      );
+    }
+    if (!tsdbEvent) return null;
+
+    const tsdbEventId = tsdbEvent.idEvent;
+    const tsdbHomeTeam = tsdbEvent.strHomeTeam ?? homeTeamName;
+    const tsdbAwayTeam = tsdbEvent.strAwayTeam ?? awayTeamName;
+
+    // 4. Fetch lineup
+    const lineupUrl = `https://
