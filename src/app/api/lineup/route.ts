@@ -23,8 +23,10 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ confirmed: false, home: null, away: null });
     }
 
+    // Return data even if partial (TheSportsDB may only have some players)
+    const hasData = (lineups.home?.starters?.length ?? 0) > 0 || (lineups.away?.starters?.length ?? 0) > 0;
     return NextResponse.json({
-      confirmed: lineups.home.confirmed && lineups.away.confirmed,
+      confirmed: hasData,
       home: lineups.home,
       away: lineups.away,
     });

@@ -175,4 +175,141 @@ async function getLineupsFromSportsDB(fixtureId: number): Promise<{ home: TeamSh
     const tsdbAwayTeam = tsdbEvent.strAwayTeam ?? awayTeamName;
 
     // 4. Fetch lineup
-    const lineupUrl = `https://
+    const lineupUrl = `https://www.thesportsdb.com/api/v1/json/123/lookuplineup.php?id=${tsdbEventId}`;
+    const lineupRes = await fetch(lineupUrl, { cache: "no-store" });
+    const lineupData = await lineupRes.json();
+    const lineup: any[] = lineupData.lineup ?? [];
+    if (lineup.length === 0) return null;
+
+    // 5. Split into home / away using strHome field
+    const homePlayers = lineup.filter((p: any) => p.strHome === "Yes" && p.strSubstitute === "No");
+    const awayPlayers = lineup.filter((p: any) => p.strHome === "No" && p.strSubstitute === "No");
+    const homeSubs = lineup.filter((p: any) => p.strHome === "Yes" && p.strSubstitute === "Yes");
+    const awaySubs = lineup.filter((p: any) => p.strHome === "No" && p.strSubstitute === "Yes");
+
+    if (homePlayers.length === 0 && awayPlayers.length === 0) return null;
+
+    function tsdbPlayerToPlayer(p: any, teamCountry: string): Player {
+      const pos = mapTsdbPosition(p.strPosition ?? "");
+      return {
+        id: Number(p.idPlayer) || 0,
+        name: p.strPlayer ?? "Unknown",
+        number: Number(p.intSquadNumber) || 0,
+        pos,
+        club: p.strTeam ?? "Unknown",
+        clubLeague: "",
+        clubLeagueCountry: "",
+        leagueTier: "minor" as import("@/types").LeagueTier,
+        bornAbroad: false,
+        scoutNote: undefined,
+      };
+    }
+
+    // Show partial lineup — TheSportsDB may only have some players
+    const home: TeamSheet = {
+      teamId: Number(tsdbEvent.idHomeTeam) || 0,
+      teamName: tsdbHomeTeam,
+      teamCountry: tsdbHomeTeam,
+      coach: fdMatch.homeTeam?.coach?.name ?? "Unknown",
+      formation: { raw: fdMatch.homeTeam?.formation ?? "", lines: [] },
+      starters: homePlayers.map((p: any) => tsdbPlayerToPlayer(p, tsdbHomeTeam)),
+      subs: homeSubs.map((p: any) => tsdbPlayerToPlayer(p, tsdbHomeTeam)),
+      confirmed: homePlayers.length > 0, // show partial if any players available
+    };
+    const away: TeamSheet = {
+      teamId: Number(tsdbEvent.idAwayTeam) || 0,
+      teamName: tsdbAwayTeam,
+      teamCountry: tsdbAwayTeam,
+      coach: fdMatch.awayTeam?.coach?.name ?? "Unknown",
+      formation: { raw: fdMatch.awayTeam?.formation ?? "", lines: [] },
+      starters: awayPlayers.map((p: any) => tsdbPlayerToPlayer(p, tsdbAwayTeam)),
+      subs: awaySubs.map((p: any) => tsdbPlayerToPlayer(p, tsdbAwayTeam)),
+      confirmed: awayPlayers.length > 0, // show partial if any players available
+    };
+
+    return { home, away };
+  } catch { return null; }
+}
+
+function mapTsdbPosition(pos: string): string {
+  const p = pos.toLowerCase();
+  if (p.includes("goalkeeper")) return "G";
+  if (p.includes("defender") || p.includes("back") || p.includes("stopper") || p.includes("sweeper")) return "D";
+  if (p.includes("midfielder") || p.includes("midfield") || p.includes("winger") || p.includes("wing")) return "M";
+  if (p.includes("forward") || p.includes("attacker") || p.includes("striker") || p.includes("centre-forward")) return "F";
+  return pos.charAt(0).toUpperCase() || "?";
+}
+
+function buildTeamSheet(team: any): TeamSheet {
+  const lineup: any[] = team?.lineup ?? [];
+  const bench: any[] = team?.bench ?? [];
+  const formationStr: string = team?.formation ?? "";
+  const lines = formationStr.split("-").map(Number).filter((n) => !isNaN(n) && n > 0);
+  return {
+    teamId: team?.id ?? 0,
+    teamName: team?.name ?? "Unknown",
+    teamCountry: team?.name ?? "Unknown",
+    coach: team?.coach?.name ?? "Unknown",
+    formation: { raw: formationStr, lines },
+    starters: lineup.map((p: any) => normalizePlayer(p, team?.name ?? "")),
+    subs: bench.map((p: any) => normalizePlayer(p, team?.name ?? "")),
+    confirmed: lineup.length >= 11,
+  };
+}
+
+function mapPosition(pos: string): string {
+  const p = (pos ?? "").toUpperCase();
+  if (p.includes("GOALKEEPER") || p === "G") return "G";
+  if (p.includes("DEFENDER") || p === "D") return "D";
+  if (p.includes("MIDFIELDER") || p === "M") return "M";
+  if (p.includes("FORWARD") || p.includes("ATTACKER") || p === "F") return "F";
+  return pos.charAt(0) || "?";
+}
+
+function normalizePlayer(p: any, teamName: string): Player {
+  const clubLeagueCountry = p.currentTeam?.area?.name ?? "";
+  return {
+    id: p.id ?? 0,
+    name: p.name ?? "Unknown",
+    number: p.shirtNumber ?? 0,
+    pos: mapPosition(p.position ?? ""),
+    club: p.currentTeam?.name ?? "Unknown Club",
+    clubLeague: p.currentTeam?.runningCompetition?.name ?? "",
+    clubLeagueCountry,
+    leagueTier: classifyLeagueTier(p.currentTeam?.runningCompetition?.name ?? "", clubLeagueCountry, teamName),
+    bornAbroad: false,
+    scoutNote: undefined,
+  };
+}
+
+const TOP5_EU = ["Premier League", "La Liga", "Bundesliga", "Serie A", "Ligue 1"];
+const OTHER_EU_COUNTRIES = ["Netherlands","Portugal","Belgium","Turkey","Scotland","Austria","Switzerland","Greece","Ukraine","Denmark","Sweden","Norway","Czech Republic","Croatia","Serbia","Poland","Romania","Hungary"];
+
+export function classifyLeagueTier(leagueName: string, leagueCountry: string, teamCountry: string): import("@/types").LeagueTier {
+  if (TOP5_EU.includes(leagueName)) return "top5eu";
+  if (OTHER_EU_COUNTRIES.includes(leagueCountry)) return "otherEu";
+  if (leagueCountry && teamCountry && leagueCountry.toLowerCase() === teamCountry.toLowerCase()) return "homeleague";
+  return "minor";
+}
+
+export async function getMatchEvents(fixtureId: number): Promise<MatchEvent[]> {
+  try {
+    const data = await apiFetch<any>(`/matches/${fixtureId}`);
+    const goals: MatchEvent[] = (data.goals ?? []).map((g: any) => ({
+      minute: g.minute ?? 0, type: "Goal",
+      playerOut: g.scorer?.name ?? "Unknown",
+      detail: g.method ?? undefined,
+    }));
+    const subs: MatchEvent[] = (data.substitutions ?? []).map((s: any) => ({
+      minute: s.minute ?? 0, type: "subst",
+      playerIn: s.replacedBy?.name ?? "Unknown",
+      playerOut: s.player?.name ?? "Unknown",
+    }));
+    const bookings: MatchEvent[] = (data.bookings ?? []).map((b: any) => ({
+      minute: b.minute ?? 0, type: "Card",
+      playerOut: b.player?.name ?? "Unknown",
+      detail: b.card ?? undefined,
+    }));
+    return [...goals, ...subs, ...bookings].sort((a, b) => a.minute - b.minute);
+  } catch { return []; }
+}
