@@ -1,0 +1,30 @@
+{
+  "name": "worldcup-companion",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "next": "14.2.5",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "ai": "^3.3.0",
+    "@ai-sdk/anthropic": "^0.0.48",
+    "@ai-sdk/openai": "^0.0.48",
+    "@ai-sdk/google": "^0.0.48",
+    "@openrouter/ai-sdk-provider": "^0.0.5",
+    "swr": "^2.2.5"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "@types/react": "^18",
+    "@types/react-dom": "^18",
+    "typescript": "^5",
+    "eslint": "^8",
+    "eslint-config-next": "14.2.5"
+  }
+}
