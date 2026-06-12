@@ -64,8 +64,23 @@ function normalizeFixture(m: any): Fixture {
 
 export async function getLiveFixtures(): Promise<Fixture[]> {
   try {
-    const data = await apiFetch<any>(`/competitions/${COMPETITION}/matches?status=IN_PLAY`);
-    return (data.matches ?? []).map(normalizeFixture);
+    // football-data.org uses IN_PLAY and PAUSED for live matches
+    const [inPlay, paused, et, pen] = await Promise.all([
+      apiFetch<any>(`/competitions/${COMPETITION}/matches?status=IN_PLAY`),
+      apiFetch<any>(`/competitions/${COMPETITION}/matches?status=PAUSED`),
+      apiFetch<any>(`/competitions/${COMPETITION}/matches?status=EXTRA_TIME`),
+      apiFetch<any>(`/competitions/${COMPETITION}/matches?status=PENALTY_SHOOTOUT`),
+    ]);
+    const all = [
+      ...(inPlay.matches ?? []),
+      ...(paused.matches ?? []),
+      ...(et.matches ?? []),
+      ...(pen.matches ?? []),
+    ];
+    // Deduplicate
+    const seen = new Set<number>();
+    return all.filter((m: any) => { if (seen.has(m.id)) return false; seen.add(m.id); return true; })
+      .map(normalizeFixture);
   } catch { return []; }
 }
 
@@ -79,8 +94,15 @@ export async function getTodayFixtures(): Promise<Fixture[]> {
 
 export async function getUpcomingFixtures(): Promise<Fixture[]> {
   try {
-    const data = await apiFetch<any>(`/competitions/${COMPETITION}/matches?status=SCHEDULED`);
-    return (data.matches ?? [])
+    // football-data.org uses both SCHEDULED and TIMED for upcoming matches
+    const [scheduled, timed] = await Promise.all([
+      apiFetch<any>(`/competitions/${COMPETITION}/matches?status=SCHEDULED`),
+      apiFetch<any>(`/competitions/${COMPETITION}/matches?status=TIMED`),
+    ]);
+    const all = [...(scheduled.matches ?? []), ...(timed.matches ?? [])];
+    const seen = new Set<number>();
+    return all
+      .filter((m: any) => { if (seen.has(m.id)) return false; seen.add(m.id); return true; })
       .map(normalizeFixture)
       .sort((a: Fixture, b: Fixture) => new Date(a.kickoff).getTime() - new Date(b.kickoff).getTime())
       .slice(0, 10);
