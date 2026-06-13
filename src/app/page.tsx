@@ -235,10 +235,11 @@ export default function Home() {
         if (!res.ok) return;
         const data = await res.json();
         const notes: Record<number, string> = data.notes ?? {};
+        const tiers: Record<number, string> = data.tiers ?? {};
 
-        // Inject notes into state
-        setHome((prev) => prev ? injectNotes(prev, notes) : prev);
-        setAway((prev) => prev ? injectNotes(prev, notes) : prev);
+        // Inject notes + LLM-corrected tiers into state
+        setHome((prev) => prev ? injectNotes(prev, notes, tiers) : prev);
+        setAway((prev) => prev ? injectNotes(prev, notes, tiers) : prev);
 
         players.forEach((p) => scoutFetchedRef.current.add(p.id));
       } catch {
@@ -258,11 +259,13 @@ export default function Home() {
   }, [lineupConfirmed, home?.teamId, away?.teamId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Helpers
-  function injectNotes(sheet: TeamSheet, notes: Record<number, string>): TeamSheet {
+  function injectNotes(sheet: TeamSheet, notes: Record<number, string>, tiers: Record<number, string> = {}): TeamSheet {
     function enrich(players: Player[]): Player[] {
-      return players.map((p) =>
-        notes[p.id] ? { ...p, scoutNote: notes[p.id] } : p
-      );
+      return players.map((p) => ({
+        ...p,
+        ...(notes[p.id] ? { scoutNote: notes[p.id] } : {}),
+        ...(tiers[p.id] ? { leagueTier: tiers[p.id] as any } : {}),
+      }));
     }
     return { ...sheet, starters: enrich(sheet.starters), subs: enrich(sheet.subs) };
   }
