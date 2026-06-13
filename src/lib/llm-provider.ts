@@ -22,7 +22,7 @@ import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 type SupportedProvider = "anthropic" | "openai" | "google" | "openrouter";
 
 const DEFAULT_MODELS: Record<SupportedProvider, string> = {
-  anthropic: "claude-haiku-4-5",
+  anthropic: "claude-haiku-4-5-20251001",
   openai: "gpt-4o-mini",
   google: "gemini-1.5-flash-latest",
   openrouter: "meta-llama/llama-3.1-8b-instruct:free",
