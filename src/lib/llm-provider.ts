@@ -76,7 +76,7 @@ export async function generatePhrase(prompt: string): Promise<string> {
   const { text } = await generateText({
     model: languageModel,
     prompt,
-    maxTokens: 80,
+    maxTokens: 300,
     temperature: 0.7,
   });
 
